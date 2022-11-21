@@ -1,12 +1,16 @@
+import 'dart:async';
 import 'dart:ui';
 
-import 'package:audio_video_progress_bar/audio_video_progress_bar.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/adapters.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:music_app/utils/player_controls.dart';
+import 'package:music_app/utils/playlist_row_item.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:rxdart/rxdart.dart';
+
+import 'data/database.dart';
 
 const String dataBoxName = "data";
 
@@ -30,7 +34,9 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: const MyHomePage(title: 'Glass Morphism'),
+      home: const MyHomePage(
+        title: 'Glass Morphism',
+      ),
     );
   }
 }
@@ -54,20 +60,32 @@ class _MyHomePageState extends State<MyHomePage> {
       const PageStorageKey("restore_songs_scroll_pos");
   bool _isPlayerControlsWidgetVisible = false;
   List<SongModel> songs = <SongModel>[];
+
   //define a variable to shopping box reference
   final _playlists = "playlists";
+
   //database
+  PlaylistDataBase db = PlaylistDataBase();
+
   //form key for validating the form fields
   final _formKey = GlobalKey<FormState>();
+
   //define a text controller and use it to retrieve the current value of the TextField
   final TextEditingController _controller = TextEditingController();
   int currIndex = 0;
   late AudioSource mainPlayList;
 
+  callback() {
+    setState(() {
+      _isPlayerControlsWidgetVisible = !_isPlayerControlsWidgetVisible;
+    });
+  }
+
   //initial state method to request storage permission
   @override
   void initState() {
     super.initState();
+    db.initDatabase();
     requestStoragePermission();
   }
 
@@ -109,7 +127,8 @@ class _MyHomePageState extends State<MyHomePage> {
                       borderRadius: BorderRadius.circular(25),
                       border: Border.all(width: 2, color: Colors.white30)),
                   child: _isPlayerControlsWidgetVisible == true
-                      ? playerControlsWidget()
+                      ? PlayerControls(
+                          _player, songs, callback) //playerControlsWidget()
                       : tabsControllerWidget(),
                 ),
               )),
@@ -128,243 +147,6 @@ class _MyHomePageState extends State<MyHomePage> {
           _player.durationStream,
           (position, duration) => PositionDurationState(
               position: position, duration: duration ?? Duration.zero));
-
-  //player control widget
-  SingleChildScrollView playerControlsWidget() {
-    return SingleChildScrollView(
-      child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.only(top: 56.0, right: 20.0, left: 20.0),
-          child: Column(
-            children: [
-              //controls exit btn and like btn
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  InkWell(
-                    onTap:
-                        changePlayerControlsWidgetVisibility, //hides the player view
-                    child: const Icon(
-                      Icons.arrow_back_ios_new,
-                      color: Colors.white70,
-                    ),
-                  ),
-                  InkWell(
-                    onTap:
-                        changePlayerControlsWidgetVisibility, //hides the player view
-                    child: const Icon(
-                      Icons.favorite_border_outlined,
-                      color: Colors.white70,
-                    ),
-                  )
-                ],
-              ),
-              //artwork container
-              Container(
-                  width: double.infinity,
-                  height: 300,
-                  margin: const EdgeInsets.only(top: 30, bottom: 30),
-                  child: StreamBuilder<int?>(
-                      stream: _player.currentIndexStream,
-                      builder: (context, snapshot) {
-                        final currentIndex = snapshot.data;
-                        if (currentIndex != null) {
-                          return QueryArtworkWidget(
-                            id: songs[currentIndex].id,
-                            type: ArtworkType.AUDIO,
-                            artworkBorder: BorderRadius.circular(4.0),
-                          );
-                        }
-                        return const CircularProgressIndicator();
-                      })),
-              //current song title container, the palying song
-              Container(
-                  width: double.infinity,
-                  height: 50,
-                  margin: const EdgeInsets.only(top: 30, bottom: 30),
-                  child: StreamBuilder<int?>(
-                      stream: _player.currentIndexStream,
-                      builder: (context, snapshot) {
-                        final currentIndex = snapshot.data;
-                        if (currentIndex != null) {
-                          return Text(
-                              nameWithoutExtension(
-                                  songs[currentIndex].displayName),
-                              style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontWeight: FontWeight.bold));
-                        }
-                        return const Text('');
-                      })),
-              //seek bar, current position and total song duration
-              Container(
-                  padding: EdgeInsets.zero,
-                  margin: const EdgeInsets.only(bottom: 4.0),
-                  // width: double.infinity,
-                  // height: 48.0,
-                  //slider bar duration state stream
-                  child: StreamBuilder<PositionDurationState>(
-                      stream: _positionDurationStateStream,
-                      builder: (context, snapshot) {
-                        final positionDurationState = snapshot.data;
-                        final progress =
-                            positionDurationState?.position ?? Duration.zero;
-                        final duration =
-                            positionDurationState?.duration ?? Duration.zero;
-
-                        return ProgressBar(
-                          progress: progress,
-                          total: duration,
-                          baseBarColor: const Color(0xEE9E9E9E),
-                          progressBarColor: Colors.blue[50],
-                          thumbColor: Colors.white60.withBlue(99),
-                          timeLabelTextStyle: const TextStyle(
-                            color: Color(0xEE9E9E9E),
-                          ),
-                          onSeek: (duration) {
-                            _player.seek(duration);
-                          },
-                        );
-                      })),
-
-              //repeat mode, shuffle mode, seek pre, play/pause next, list container
-              Container(
-                  margin: const EdgeInsets.only(top: 30, bottom: 4.0),
-                  // width: double.infinity,
-                  // height: 80,
-                  child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        //repeat mode & shuffle
-                        InkWell(
-                          onTap: () {
-                            //player.loopMode == LoopMode.one? _player.setLoopMode(LoopMode.all): _player.setLoopMode(LoopMode.one);
-                            final loopMode = _player.loopMode;
-                            final shuffle = _player.shuffleModeEnabled;
-                            //change to loop one mode
-                            if (LoopMode.all == loopMode && !shuffle) {
-                              _player.setLoopMode(LoopMode.one);
-                              //change to shuffle mode
-                            } else if (LoopMode.one == loopMode && !shuffle) {
-                              _player.setLoopMode(LoopMode.all);
-                              _player.setShuffleModeEnabled(true);
-                            } else {
-                              //change to loop all (no shuffle) mode
-                              _player.setLoopMode(LoopMode.all);
-                              _player.setShuffleModeEnabled(false);
-                            }
-                          },
-                          child: StreamBuilder<LoopMode>(
-                              stream: _player.loopModeStream,
-                              builder: (context, snapshot) {
-                                final loopMode = snapshot.data;
-                                final shuffle = _player.shuffleModeEnabled;
-                                if (LoopMode.all == loopMode && !shuffle) {
-                                  return const Icon(
-                                    Icons.repeat,
-                                    color: Colors.white70,
-                                  );
-                                } else if (LoopMode.one == loopMode &&
-                                    !shuffle) {
-                                  return const Icon(
-                                    Icons.repeat_one,
-                                    color: Colors.white70,
-                                  );
-                                } else if (LoopMode.all == loopMode &&
-                                    shuffle) {
-                                  return const Icon(
-                                    Icons.shuffle,
-                                    color: Colors.white70,
-                                  );
-                                }
-                                return const Icon(
-                                  Icons.shuffle_sharp,
-                                  color: Colors.white70,
-                                );
-                              }),
-                        ),
-
-                        //skip to prev
-                        InkWell(
-                          onTap: () {
-                            if (_player.hasPrevious) {
-                              _player.seekToPrevious();
-                            }
-                          },
-                          child: const Icon(
-                            Icons.skip_previous,
-                            color: Colors.white70,
-                            size: 30,
-                          ),
-                        ),
-
-                        InkWell(
-                            onTap: () {
-                              if (_player.playing) {
-                                _player.pause();
-                              } else {
-                                if (_player.currentIndex != null) {
-                                  _player.play();
-                                }
-                              }
-                            },
-                            child: Container(
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                      color: Colors.white24,
-                                      width: 1,
-                                      style: BorderStyle.solid),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: StreamBuilder<bool>(
-                                    stream: _player.playingStream,
-                                    builder: (context, snapshot) {
-                                      bool? playingState = snapshot.data;
-                                      if (playingState != null &&
-                                          playingState) {
-                                        return const Icon(
-                                          Icons.pause,
-                                          size: 36,
-                                          color: Colors.white70,
-                                        );
-                                      }
-                                      return const Icon(
-                                        Icons.play_arrow,
-                                        size: 36,
-                                        color: Colors.white70,
-                                      );
-                                    }))),
-
-                        //skipNext
-                        InkWell(
-                          onTap: () {
-                            if (_player.hasNext) {
-                              _player.seekToNext();
-                            }
-                          },
-                          child: const Icon(
-                            Icons.skip_next,
-                            color: Colors.white70,
-                            size: 30,
-                          ),
-                        ),
-
-                        //go to playList
-                        InkWell(
-                          onTap: () {
-                            changePlayerControlsWidgetVisibility();
-                          },
-                          child: const Icon(
-                            Icons.playlist_play,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ])),
-            ],
-          )),
-    );
-  }
 
 //tabs controller page widget
   DefaultTabController tabsControllerWidget() {
@@ -461,8 +243,6 @@ class _MyHomePageState extends State<MyHomePage> {
                   showToast(context, songs[index].displayName);
 
                   //play song (default main list)
-                  // await _player.setAudioSource(
-                  //     AudioSource.uri(Uri.parse(songs[index].uri!)));
                   await _player.setAudioSource(mainPlayList,
                       initialIndex: index, initialPosition: Duration.zero);
                   await _player.play();
@@ -528,12 +308,8 @@ class _MyHomePageState extends State<MyHomePage> {
             return ListView.builder(
                 itemCount: playlistNames.length,
                 itemBuilder: (context, index) {
-                  // if (index == 0){
-                  //   return cartHeadWidget((playlistNames.length-1).toString());
-                  // }
-                  //Playlist p = cast<Playlist>(playlistNames.elementAt(index));
-                  return playlistRowItem(
-                      playlistNames.elementAt(index).toString(), 0);
+                  return PlaylistRowItem(
+                      playlistNames.elementAt(index).toString(), 0, db);
                 });
           },
         ))
@@ -565,6 +341,7 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
             Flexible(
+              flex: 4,
               child: Text(
                 "Add New Playlist",
                 style: TextStyle(
@@ -572,7 +349,6 @@ class _MyHomePageState extends State<MyHomePage> {
                     fontSize: 18,
                     fontWeight: FontWeight.bold),
               ),
-              flex: 4,
             ),
           ],
         ),
@@ -617,10 +393,6 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  String nameWithoutExtension(String fullName) {
-    return fullName.split(".m").first.toString();
-  }
-
   List<AudioSource> addAudioFromLocal() {
     List<AudioSource> res = [];
     for (int i = 0; i < songs.length; i++) {
@@ -640,8 +412,8 @@ class _MyHomePageState extends State<MyHomePage> {
               child: Padding(
                   padding: const EdgeInsets.only(top: 8, bottom: 4),
                   child: TextFormField(
-                      controller:
-                          _controller, //will help get the field value on submit
+                      controller: _controller,
+                      //will help get the field value on submit
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         labelText: 'Playlist Name',
@@ -674,7 +446,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       List<SongModel> playlistSongs =
                           List.empty(growable: true);
                       String playlistName = _controller.text;
-                      Hive.box(_playlists).put(playlistName, playlistSongs);
+                      db.updateDataBaseWithVal(playlistName, playlistSongs);
                       _controller.clear(); // clear text in field
                       showToast(context, "playlist $playlistName is created");
                       Navigator.of(context).pop(); //dismiss dialog
@@ -684,143 +456,4 @@ class _MyHomePageState extends State<MyHomePage> {
           );
         });
   }
-
-  Widget playlistRowItem(String name, int count) {
-    int playlistLen = (Hive.box(_playlists).get(name) != null)
-        ? Hive.box(_playlists).get(name).length
-        : -1;
-    return Container(
-        margin: const EdgeInsets.only(top: 10.0, left: 10.0, right: 10.0),
-        padding:
-            const EdgeInsets.only(top: 20.0, bottom: 20.0, right: 5, left: 5),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(4.0),
-          border: Border.all(
-              color: Colors.white70, width: 1.0, style: BorderStyle.solid),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            // Flexible(
-            //   child: Container(
-            //     alignment: Alignment.center,
-            //     height: 40,
-            //     width: 40,
-            //     padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 5),
-            //     margin: const EdgeInsets.symmetric(vertical: 5),
-            //     child: const Icon(
-            //       Icons.add_box_sharp,
-            //       color: Colors.white60,
-            //       size: 20,
-            //     ),
-            //   ),
-            // ),
-            Flexible(
-              flex: 2,
-              child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Text(
-                        name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white60,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    Center(
-                      child: Text("$playlistLen songs",
-                          style: const TextStyle(
-                              color: Colors.white60,
-                              fontSize: 15,
-                              fontWeight: FontWeight.normal)),
-                    ),
-                  ]),
-            ),
-            Flexible(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  //Edit btn
-                  InkWell(
-                    onTap: () {
-                      //edit btn clicked
-                      showToast(context, "Edit the playlist $name");
-                    },
-                    child: Container(
-                      alignment: Alignment.center,
-                      height: 40,
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 1, horizontal: 10),
-                      margin: const EdgeInsets.symmetric(vertical: 10),
-                      child: const Icon(
-                        Icons.edit,
-                        color: Colors.white60,
-                        size: 20,
-                      ),
-                    ),
-                  ),
-                  //delete btn
-                  InkWell(
-                      onTap: () {
-                        //delete btn clicked
-                        deletePlayListItem(context, name);
-                      },
-                      child: Container(
-                        alignment: Alignment.center,
-                        height: 40,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 5, horizontal: 8),
-                        margin: const EdgeInsets.only(
-                            top: 10, bottom: 10, left: 10),
-                        child: const Icon(
-                          Icons.delete,
-                          color: Colors.white60,
-                          size: 20,
-                        ),
-                      )),
-                ],
-              ),
-            ),
-          ],
-        ));
-  }
-
-  //delete a shopping item from the shopping box
-  void deletePlayListItem(BuildContext context, String item) {
-    showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: const Text("Are You Sure ??"),
-            content: Text("Confirm to remove playlist \"$item\""),
-            actions: [
-              TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop(); // dismiss dialog
-                  },
-                  child: const Text("Cancel")),
-              TextButton(
-                child: const Text("Remove"),
-                onPressed: () {
-                  Hive.box(_playlists).delete(item); //key is item name.
-                  Navigator.of(context).pop(); // dismiss dialog
-                },
-              ),
-            ],
-          );
-        });
-  }
-}
-
-//position and duration state class
-class PositionDurationState {
-  Duration position, duration;
-  //constructor
-  PositionDurationState(
-      {this.position = Duration.zero, this.duration = Duration.zero});
 }
